@@ -304,11 +304,14 @@ export default function PublicEvent() {
               </Button>
             </div>
           ) : (
-            <StripeElementsWrapper
-              clientSecret={clientSecret}
-              onSuccess={handlePaymentSuccess}
-              onError={handlePaymentError}
-            />
+            <div className="border-2 border-red-500 min-h-[300px] p-4">
+              <p className="text-white mb-4">Secret: {clientSecret?.slice(0, 20)}...</p>
+              <StripeElementsWrapper
+                clientSecret={clientSecret}
+                onSuccess={handlePaymentSuccess}
+                onError={handlePaymentError}
+              />
+            </div>
           )}
         </CardContent>
       </Card>
