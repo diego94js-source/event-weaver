@@ -45,11 +45,13 @@ export default function StripePaymentForm({ onSuccess, onError }: StripePaymentF
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <PaymentElement 
-        options={{
-          layout: 'tabs',
-        }}
-      />
+      <div className="bg-white p-4 rounded-md min-h-[150px] text-black">
+        <PaymentElement 
+          options={{
+            layout: 'tabs',
+          }}
+        />
+      </div>
       <Button 
         type="submit" 
         className="w-full text-lg py-6" 
