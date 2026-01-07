@@ -1,17 +1,22 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
-import { Calendar, MapPin, Euro, Loader2, CheckCircle, ArrowLeft } from 'lucide-react';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
-import { Elements } from '@stripe/react-stripe-js';
-import { stripePromise } from '@/lib/stripe';
-import StripePaymentForm from '@/components/StripePaymentForm';
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { ArrowLeft, Calendar, CheckCircle, Euro, Loader2, MapPin } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+
+// Stripe Promise FUERA del componente (evita reinicios y flicker)
+const stripePromise = loadStripe(
+  "pk_test_51SmxFvA18R9LygVKkNvQhichv7L5YuwboV6HS3Fe2LISWetleD5qE4Vh81Fxuh14FGznGhHyEIYt88Nj9NxBkmSd0001BkhGHc"
+);
 
 interface Event {
   id: string;
@@ -22,68 +27,115 @@ interface Event {
   status: string;
 }
 
-// Separate component to prevent re-renders of Elements
-function StripeElementsWrapper({
-  clientSecret,
+function CheckoutForm({
   onSuccess,
   onError,
 }: {
-  clientSecret: string;
-  onSuccess: (intentId: string) => void;
+  onSuccess: (paymentIntentId: string) => void;
   onError: (message: string) => void;
 }) {
-  const options = useMemo(
-    () => ({
-      clientSecret,
-    }),
-    [clientSecret]
-  );
+  const stripe = useStripe();
+  const elements = useElements();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentReady, setPaymentReady] = useState(false);
 
-  if (!stripePromise) return null;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!stripe || !elements || !paymentReady) return;
+
+    setIsProcessing(true);
+
+    const { error, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: window.location.href,
+      },
+      redirect: "if_required",
+    });
+
+    if (error) {
+      onError(error.message || "Error al procesar el pago");
+      setIsProcessing(false);
+      return;
+    }
+
+    if (paymentIntent) onSuccess(paymentIntent.id);
+    setIsProcessing(false);
+  };
 
   return (
-    <Elements stripe={stripePromise} options={options}>
-      <StripePaymentForm onSuccess={onSuccess} onError={onError} />
-    </Elements>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="w-full bg-white p-4 rounded-lg text-black">
+        <PaymentElement
+          onReady={() => setPaymentReady(true)}
+          options={{
+            layout: "tabs",
+          }}
+        />
+      </div>
+
+      <Button
+        type="submit"
+        className="w-full text-lg py-6"
+        disabled={!stripe || !elements || !paymentReady || isProcessing}
+      >
+        {isProcessing && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
+        Reservar Lugar
+      </Button>
+
+      <p className="text-center text-xs text-muted-foreground">
+        Sin cargo si asistes. La fianza se cobra solo si no te presentas.
+      </p>
+    </form>
   );
 }
 
 export default function PublicEvent() {
   const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
+
   const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitted, setSubmitted] = useState(false);
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+
   const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [creatingIntent, setCreatingIntent] = useState(false);
-  const { toast } = useToast();
+
+  const elementsOptions = useMemo(() => {
+    if (!clientSecret) return null;
+    return { clientSecret };
+  }, [clientSecret]);
 
   useEffect(() => {
     const fetchEvent = async () => {
       if (!id) return;
 
       const { data, error } = await supabase
-        .from('events')
-        .select('*')
-        .eq('id', id)
+        .from("events")
+        .select("*")
+        .eq("id", id)
         .maybeSingle();
 
       if (error || !data) {
         toast({
-          title: 'Error',
-          description: 'No se pudo encontrar el evento.',
-          variant: 'destructive',
+          title: "Error",
+          description: "No se pudo encontrar el evento.",
+          variant: "destructive",
         });
+        setEvent(null);
       } else {
         setEvent(data);
       }
+
       setLoading(false);
     };
 
     fetchEvent();
-  }, [id]);
+  }, [id, toast]);
 
   const handleContinueToPayment = async () => {
     if (!event) return;
@@ -93,49 +145,48 @@ export default function PublicEvent() {
 
     if (!trimmedEmail || !trimmedName) {
       toast({
-        title: 'Error',
-        description: 'Por favor completa todos los campos.',
-        variant: 'destructive',
+        title: "Error",
+        description: "Por favor completa todos los campos.",
+        variant: "destructive",
       });
       return;
     }
 
-    // Check if already registered
+    // Ya registrado
     const { data: existing } = await supabase
-      .from('attendees')
-      .select('id')
-      .eq('event_id', event.id)
-      .eq('user_email', trimmedEmail)
+      .from("attendees")
+      .select("id")
+      .eq("event_id", event.id)
+      .eq("user_email", trimmedEmail)
       .maybeSingle();
 
     if (existing) {
       toast({
-        title: 'Ya registrado',
-        description: 'Este email ya está registrado para el evento.',
-        variant: 'destructive',
+        title: "Ya registrado",
+        description: "Este email ya está registrado para el evento.",
+        variant: "destructive",
       });
       return;
     }
 
     setCreatingIntent(true);
 
-    // Create PaymentIntent via Edge Function
-    const { data, error } = await supabase.functions.invoke('create-payment-intent', {
+    const { data, error } = await supabase.functions.invoke("create-payment-intent", {
       body: { eventId: event.id, email: trimmedEmail },
     });
 
     if (error || !data?.clientSecret) {
       toast({
-        title: 'Error',
-        description: 'No se pudo iniciar el proceso de pago.',
-        variant: 'destructive',
+        title: "Error",
+        description: "No se pudo iniciar el proceso de pago.",
+        variant: "destructive",
       });
       setCreatingIntent(false);
       return;
     }
 
     setClientSecret(data.clientSecret);
-    setPaymentIntentId(data.paymentIntentId);
+    // Forzar apagado del spinner (evita quedarse colgado)
     setCreatingIntent(false);
   };
 
@@ -144,34 +195,34 @@ export default function PublicEvent() {
 
     const trimmedEmail = email.trim().toLowerCase();
 
-    // Save attendee with payment intent ID
-    const { error } = await supabase.from('attendees').insert({
+    const { error } = await supabase.from("attendees").insert({
       event_id: event.id,
       user_email: trimmedEmail,
       stripe_payment_intent_id: intentId,
-      status: 'registered',
+      status: "registered",
     });
 
     if (error) {
       toast({
-        title: 'Error',
-        description: 'No se pudo completar el registro.',
-        variant: 'destructive',
+        title: "Error",
+        description: "No se pudo completar el registro.",
+        variant: "destructive",
       });
-    } else {
-      setSubmitted(true);
-      toast({
-        title: '¡Registrado!',
-        description: 'Te has registrado exitosamente para el evento.',
-      });
+      return;
     }
+
+    setSubmitted(true);
+    toast({
+      title: "¡Registrado!",
+      description: "Te has registrado exitosamente para el evento.",
+    });
   };
 
-  const handlePaymentError = (errorMessage: string) => {
+  const handlePaymentError = (message: string) => {
     toast({
-      title: 'Error de pago',
-      description: errorMessage,
-      variant: 'destructive',
+      title: "Error de pago",
+      description: message,
+      variant: "destructive",
     });
   };
 
@@ -227,13 +278,12 @@ export default function PublicEvent() {
             Regístrate para confirmar tu asistencia
           </CardDescription>
         </CardHeader>
+
         <CardContent className="space-y-6">
           <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4">
             <div className="flex items-center gap-3 text-foreground">
               <Calendar className="h-5 w-5 text-primary" />
-              <span>
-                {format(new Date(event.event_date), "EEEE, d 'de' MMMM, yyyy", { locale: es })}
-              </span>
+              <span>{format(new Date(event.event_date), "EEEE, d 'de' MMMM, yyyy", { locale: es })}</span>
             </div>
             <div className="flex items-center gap-3 text-foreground">
               <Calendar className="h-5 w-5 text-primary" />
@@ -252,15 +302,15 @@ export default function PublicEvent() {
               <Euro className="h-6 w-6" />
               <span className="text-2xl font-bold">€{event.deposit_amount.toFixed(2)}</span>
             </div>
-            <p className="mt-2 text-sm text-yellow-300">
-              Fianza reembolsable si asistes
-            </p>
+            <p className="mt-2 text-sm text-yellow-300">Fianza reembolsable si asistes</p>
           </div>
 
           {!clientSecret ? (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="name" className="text-foreground">Tu Nombre</Label>
+                <Label htmlFor="name" className="text-foreground">
+                  Tu Nombre
+                </Label>
                 <Input
                   id="name"
                   type="text"
@@ -272,8 +322,11 @@ export default function PublicEvent() {
                   className="bg-input border-border"
                 />
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-foreground">Tu Email</Label>
+                <Label htmlFor="email" className="text-foreground">
+                  Tu Email
+                </Label>
                 <Input
                   id="email"
                   type="email"
@@ -285,9 +338,11 @@ export default function PublicEvent() {
                   className="bg-input border-border"
                 />
               </div>
-              <Button 
-                onClick={handleContinueToPayment} 
-                className="w-full text-lg py-6" 
+
+              <Button
+                type="button"
+                onClick={handleContinueToPayment}
+                className="w-full text-lg py-6"
                 disabled={creatingIntent}
               >
                 {creatingIntent && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
@@ -295,14 +350,11 @@ export default function PublicEvent() {
               </Button>
             </div>
           ) : (
-            <div className="border-2 border-red-500 min-h-[300px] p-4">
-              <p className="text-white mb-4">Secret: {clientSecret?.slice(0, 20)}...</p>
-              <StripeElementsWrapper
-                clientSecret={clientSecret}
-                onSuccess={handlePaymentSuccess}
-                onError={handlePaymentError}
-              />
-            </div>
+            elementsOptions && (
+              <Elements stripe={stripePromise} options={elementsOptions}>
+                <CheckoutForm onSuccess={handlePaymentSuccess} onError={handlePaymentError} />
+              </Elements>
+            )
           )}
         </CardContent>
       </Card>
