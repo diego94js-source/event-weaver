@@ -9,6 +9,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { Calendar, MapPin, Euro, Loader2, CheckCircle, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { Elements } from '@stripe/react-stripe-js';
+import { stripePromise } from '@/lib/stripe';
+import StripePaymentForm from '@/components/StripePaymentForm';
 
 interface Event {
   id: string;
@@ -23,10 +26,12 @@ export default function PublicEvent() {
   const { id } = useParams<{ id: string }>();
   const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
+  const [creatingIntent, setCreatingIntent] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -54,8 +59,7 @@ export default function PublicEvent() {
     fetchEvent();
   }, [id]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleContinueToPayment = async () => {
     if (!event) return;
 
     const trimmedEmail = email.trim().toLowerCase();
@@ -69,8 +73,6 @@ export default function PublicEvent() {
       });
       return;
     }
-
-    setSubmitting(true);
 
     // Check if already registered
     const { data: existing } = await supabase
@@ -86,13 +88,41 @@ export default function PublicEvent() {
         description: 'Este email ya está registrado para el evento.',
         variant: 'destructive',
       });
-      setSubmitting(false);
       return;
     }
 
+    setCreatingIntent(true);
+
+    // Create PaymentIntent via Edge Function
+    const { data, error } = await supabase.functions.invoke('create-payment-intent', {
+      body: { eventId: event.id, email: trimmedEmail },
+    });
+
+    if (error || !data?.clientSecret) {
+      toast({
+        title: 'Error',
+        description: 'No se pudo iniciar el proceso de pago.',
+        variant: 'destructive',
+      });
+      setCreatingIntent(false);
+      return;
+    }
+
+    setClientSecret(data.clientSecret);
+    setPaymentIntentId(data.paymentIntentId);
+    setCreatingIntent(false);
+  };
+
+  const handlePaymentSuccess = async (intentId: string) => {
+    if (!event) return;
+
+    const trimmedEmail = email.trim().toLowerCase();
+
+    // Save attendee with payment intent ID
     const { error } = await supabase.from('attendees').insert({
       event_id: event.id,
       user_email: trimmedEmail,
+      stripe_payment_intent_id: intentId,
       status: 'registered',
     });
 
@@ -109,8 +139,14 @@ export default function PublicEvent() {
         description: 'Te has registrado exitosamente para el evento.',
       });
     }
+  };
 
-    setSubmitting(false);
+  const handlePaymentError = (errorMessage: string) => {
+    toast({
+      title: 'Error de pago',
+      description: errorMessage,
+      variant: 'destructive',
+    });
   };
 
   if (loading) {
@@ -195,41 +231,67 @@ export default function PublicEvent() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name" className="text-foreground">Tu Nombre</Label>
-              <Input
-                id="name"
-                type="text"
-                placeholder="Juan García"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                maxLength={100}
-                className="bg-input border-border"
-              />
+          {!clientSecret ? (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="name" className="text-foreground">Tu Nombre</Label>
+                <Input
+                  id="name"
+                  type="text"
+                  placeholder="Juan García"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  maxLength={100}
+                  className="bg-input border-border"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-foreground">Tu Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="tu@email.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  maxLength={255}
+                  className="bg-input border-border"
+                />
+              </div>
+              <Button 
+                onClick={handleContinueToPayment} 
+                className="w-full text-lg py-6" 
+                disabled={creatingIntent}
+              >
+                {creatingIntent && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
+                Continuar al Pago
+              </Button>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">Tu Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="tu@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                maxLength={255}
-                className="bg-input border-border"
-              />
-            </div>
-            <Button type="submit" className="w-full text-lg py-6" disabled={submitting}>
-              {submitting && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
-              Reservar Lugar
-            </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              Sin cargo si asistes. La fianza se cobra solo si no te presentas.
-            </p>
-          </form>
+          ) : (
+            stripePromise && (
+              <Elements
+                stripe={stripePromise}
+                options={{
+                  clientSecret,
+                  appearance: {
+                    theme: 'night',
+                    variables: {
+                      colorPrimary: '#6366f1',
+                      colorBackground: '#1e1e1e',
+                      colorText: '#ffffff',
+                      colorDanger: '#ef4444',
+                    },
+                  },
+                }}
+              >
+                <StripePaymentForm
+                  onSuccess={handlePaymentSuccess}
+                  onError={handlePaymentError}
+                />
+              </Elements>
+            )
+          )}
         </CardContent>
       </Card>
     </div>
