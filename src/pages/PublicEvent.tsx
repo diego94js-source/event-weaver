@@ -35,15 +35,6 @@ function StripeElementsWrapper({
   const options = useMemo(
     () => ({
       clientSecret,
-      appearance: {
-        theme: 'night' as const,
-        variables: {
-          colorPrimary: '#6366f1',
-          colorBackground: '#1e1e1e',
-          colorText: '#ffffff',
-          colorDanger: '#ef4444',
-        },
-      },
     }),
     [clientSecret]
   );
