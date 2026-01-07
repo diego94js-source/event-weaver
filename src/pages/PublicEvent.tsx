@@ -1,0 +1,237 @@
+import { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
+import { Calendar, MapPin, Euro, Loader2, CheckCircle, ArrowLeft } from 'lucide-react';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
+
+interface Event {
+  id: string;
+  title: string;
+  event_date: string;
+  deposit_amount: number;
+  location: string | null;
+  status: string;
+}
+
+export default function PublicEvent() {
+  const { id } = useParams<{ id: string }>();
+  const [event, setEvent] = useState<Event | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const fetchEvent = async () => {
+      if (!id) return;
+
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error || !data) {
+        toast({
+          title: 'Error',
+          description: 'No se pudo encontrar el evento.',
+          variant: 'destructive',
+        });
+      } else {
+        setEvent(data);
+      }
+      setLoading(false);
+    };
+
+    fetchEvent();
+  }, [id]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!event) return;
+
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedName = name.trim();
+
+    if (!trimmedEmail || !trimmedName) {
+      toast({
+        title: 'Error',
+        description: 'Por favor completa todos los campos.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSubmitting(true);
+
+    // Check if already registered
+    const { data: existing } = await supabase
+      .from('attendees')
+      .select('id')
+      .eq('event_id', event.id)
+      .eq('user_email', trimmedEmail)
+      .maybeSingle();
+
+    if (existing) {
+      toast({
+        title: 'Ya registrado',
+        description: 'Este email ya está registrado para el evento.',
+        variant: 'destructive',
+      });
+      setSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabase.from('attendees').insert({
+      event_id: event.id,
+      user_email: trimmedEmail,
+      status: 'registered',
+    });
+
+    if (error) {
+      toast({
+        title: 'Error',
+        description: 'No se pudo completar el registro.',
+        variant: 'destructive',
+      });
+    } else {
+      setSubmitted(true);
+      toast({
+        title: '¡Registrado!',
+        description: 'Te has registrado exitosamente para el evento.',
+      });
+    }
+
+    setSubmitting(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!event) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
+        <h1 className="mb-4 text-2xl font-bold text-foreground">Evento no encontrado</h1>
+        <p className="mb-6 text-muted-foreground">El evento que buscas no existe o ha sido eliminado.</p>
+        <Button asChild>
+          <Link to="/">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Volver al inicio
+          </Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (submitted) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
+        <div className="text-center">
+          <CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-500" />
+          <h1 className="mb-2 text-2xl font-bold text-foreground">¡Registro Exitoso!</h1>
+          <p className="mb-6 text-muted-foreground">
+            Te has registrado para <strong>{event.title}</strong>.<br />
+            Recibirás más información pronto.
+          </p>
+          <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4">
+            <p className="text-sm text-yellow-400">
+              Recuerda: Si no asistes, se te cobrará la fianza de €{event.deposit_amount.toFixed(2)}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-lg border-border bg-card">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl font-bold text-foreground">{event.title}</CardTitle>
+          <CardDescription className="text-muted-foreground">
+            Regístrate para confirmar tu asistencia
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4">
+            <div className="flex items-center gap-3 text-foreground">
+              <Calendar className="h-5 w-5 text-primary" />
+              <span>
+                {format(new Date(event.event_date), "EEEE, d 'de' MMMM, yyyy", { locale: es })}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-foreground">
+              <Calendar className="h-5 w-5 text-primary" />
+              <span>{format(new Date(event.event_date), "HH:mm 'hrs'", { locale: es })}</span>
+            </div>
+            {event.location && (
+              <div className="flex items-center gap-3 text-foreground">
+                <MapPin className="h-5 w-5 text-primary" />
+                <span>{event.location}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border-2 border-yellow-500 bg-yellow-500/10 p-4 text-center">
+            <div className="flex items-center justify-center gap-2 text-yellow-400">
+              <Euro className="h-6 w-6" />
+              <span className="text-2xl font-bold">€{event.deposit_amount.toFixed(2)}</span>
+            </div>
+            <p className="mt-2 text-sm text-yellow-300">
+              Fianza reembolsable si asistes
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name" className="text-foreground">Tu Nombre</Label>
+              <Input
+                id="name"
+                type="text"
+                placeholder="Juan García"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                maxLength={100}
+                className="bg-input border-border"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-foreground">Tu Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="tu@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                maxLength={255}
+                className="bg-input border-border"
+              />
+            </div>
+            <Button type="submit" className="w-full text-lg py-6" disabled={submitting}>
+              {submitting && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
+              Reservar Lugar
+            </Button>
+            <p className="text-center text-xs text-muted-foreground">
+              Sin cargo si asistes. La fianza se cobra solo si no te presentas.
+            </p>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
