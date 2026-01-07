@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,41 @@ interface Event {
   deposit_amount: number;
   location: string | null;
   status: string;
+}
+
+// Separate component to prevent re-renders of Elements
+function StripeElementsWrapper({
+  clientSecret,
+  onSuccess,
+  onError,
+}: {
+  clientSecret: string;
+  onSuccess: (intentId: string) => void;
+  onError: (message: string) => void;
+}) {
+  const options = useMemo(
+    () => ({
+      clientSecret,
+      appearance: {
+        theme: 'night' as const,
+        variables: {
+          colorPrimary: '#6366f1',
+          colorBackground: '#1e1e1e',
+          colorText: '#ffffff',
+          colorDanger: '#ef4444',
+        },
+      },
+    }),
+    [clientSecret]
+  );
+
+  if (!stripePromise) return null;
+
+  return (
+    <Elements stripe={stripePromise} options={options}>
+      <StripePaymentForm onSuccess={onSuccess} onError={onError} />
+    </Elements>
+  );
 }
 
 export default function PublicEvent() {
@@ -269,28 +304,11 @@ export default function PublicEvent() {
               </Button>
             </div>
           ) : (
-            stripePromise && (
-              <Elements
-                stripe={stripePromise}
-                options={{
-                  clientSecret,
-                  appearance: {
-                    theme: 'night',
-                    variables: {
-                      colorPrimary: '#6366f1',
-                      colorBackground: '#1e1e1e',
-                      colorText: '#ffffff',
-                      colorDanger: '#ef4444',
-                    },
-                  },
-                }}
-              >
-                <StripePaymentForm
-                  onSuccess={handlePaymentSuccess}
-                  onError={handlePaymentError}
-                />
-              </Elements>
-            )
+            <StripeElementsWrapper
+              clientSecret={clientSecret}
+              onSuccess={handlePaymentSuccess}
+              onError={handlePaymentError}
+            />
           )}
         </CardContent>
       </Card>
