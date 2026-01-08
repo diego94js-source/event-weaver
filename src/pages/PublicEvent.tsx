@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { stripePromise } from "@/lib/stripe";
+import { getStripePromise } from "@/lib/stripe";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -127,8 +127,8 @@ export default function PublicEvent() {
             <div className="space-y-4">
               <p className="text-green-400 text-center font-medium">Pago Iniciado Correctamente</p>
               <Elements 
-                stripe={stripePromise} 
-                options={{ 
+                stripe={getStripePromise()} 
+                options={{
                   clientSecret,
                   appearance: {
                     theme: 'stripe',
