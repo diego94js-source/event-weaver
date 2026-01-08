@@ -1,360 +1,134 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
-import { ArrowLeft, Calendar, CheckCircle, Euro, Loader2, MapPin } from "lucide-react";
-
+import { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import { stripePromise } from "@/lib/stripe";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { Calendar, MapPin, Loader2 } from "lucide-react";
 
-// Stripe Promise FUERA del componente (evita reinicios y flicker)
-const stripePromise = loadStripe(
-  "pk_test_51SmxFvA18R9LygVKkNvQhichv7L5YuwboV6HS3Fe2LISWetleD5qE4Vh81Fxuh14FGznGhHyEIYt88Nj9NxBkmSd0001BkhGHc"
-);
-
-interface Event {
-  id: string;
-  title: string;
-  event_date: string;
-  deposit_amount: number;
-  location: string | null;
-  status: string;
-}
-
-function CheckoutForm({
-  onSuccess,
-  onError,
-}: {
-  onSuccess: (paymentIntentId: string) => void;
-  onError: (message: string) => void;
-}) {
+// --- SUB-COMPONENTE: EL FORMULARIO (CheckoutForm) ---
+// Al estar separado, garantizamos que Stripe no se desmonte al escribir
+const CheckoutForm = ({ clientSecret, onSuccess }: { clientSecret: string, onSuccess: () => void }) => {
   const stripe = useStripe();
   const elements = useElements();
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentReady, setPaymentReady] = useState(false);
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!stripe || !elements) return;
 
-    if (!stripe || !elements || !paymentReady) return;
-
-    setIsProcessing(true);
-
-    const { error, paymentIntent } = await stripe.confirmPayment({
+    setLoading(true);
+    const { error } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: window.location.href,
+        return_url: window.location.href + "?payment_success=true",
       },
-      redirect: "if_required",
+      redirect: 'if_required',
     });
-
     if (error) {
-      onError(error.message || "Error al procesar el pago");
-      setIsProcessing(false);
-      return;
+      toast({ title: "Error en el pago", description: error.message, variant: "destructive" });
+      setLoading(false);
+    } else {
+      onSuccess();
     }
-
-    if (paymentIntent) onSuccess(paymentIntent.id);
-    setIsProcessing(false);
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="w-full bg-white p-4 rounded-lg text-black">
-        <PaymentElement
-          onReady={() => setPaymentReady(true)}
-          options={{
-            layout: "tabs",
-          }}
-        />
+      <div className="w-full bg-white p-4 rounded-lg text-black min-h-[150px]">
+        <PaymentElement />
       </div>
-
-      <Button
-        type="submit"
-        className="w-full text-lg py-6"
-        disabled={!stripe || !elements || !paymentReady || isProcessing}
-      >
-        {isProcessing && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
-        Reservar Lugar
+      <Button type="submit" disabled={!stripe || loading} className="w-full">
+        {loading ? <Loader2 className="animate-spin" /> : "Reservar Lugar (€20.00)"}
       </Button>
-
-      <p className="text-center text-xs text-muted-foreground">
-        Sin cargo si asistes. La fianza se cobra solo si no te presentas.
-      </p>
     </form>
   );
-}
+};
 
+// --- COMPONENTE PRINCIPAL ---
 export default function PublicEvent() {
-  const { id } = useParams<{ id: string }>();
+  const { id } = useParams();
   const { toast } = useToast();
-
-  const [event, setEvent] = useState<Event | null>(null);
+  const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [submitted, setSubmitted] = useState(false);
-
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-
   const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [creatingIntent, setCreatingIntent] = useState(false);
-
-  const elementsOptions = useMemo(() => {
-    if (!clientSecret) return null;
-    return { clientSecret };
-  }, [clientSecret]);
+  const [isPreparing, setIsPreparing] = useState(false);
 
   useEffect(() => {
     const fetchEvent = async () => {
-      if (!id) return;
-
-      const { data, error } = await supabase
-        .from("events")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
-
-      if (error || !data) {
-        toast({
-          title: "Error",
-          description: "No se pudo encontrar el evento.",
-          variant: "destructive",
-        });
-        setEvent(null);
-      } else {
-        setEvent(data);
-      }
-
+      const { data, error } = await supabase.from("events").select("*").eq("id", id).single();
+      if (error) console.error(error);
+      setEvent(data);
       setLoading(false);
     };
+    if (id) fetchEvent();
+  }, [id]);
 
-    fetchEvent();
-  }, [id, toast]);
-
-  const handleContinueToPayment = async () => {
-    if (!event) return;
-
-    const trimmedEmail = email.trim().toLowerCase();
-    const trimmedName = name.trim();
-
-    if (!trimmedEmail || !trimmedName) {
-      toast({
-        title: "Error",
-        description: "Por favor completa todos los campos.",
-        variant: "destructive",
-      });
+  const handleStartBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name || !email) {
+      toast({ title: "Faltan datos", description: "Por favor completa todos los campos", variant: "destructive" });
       return;
     }
-
-    // Ya registrado
-    const { data: existing } = await supabase
-      .from("attendees")
-      .select("id")
-      .eq("event_id", event.id)
-      .eq("user_email", trimmedEmail)
-      .maybeSingle();
-
-    if (existing) {
-      toast({
-        title: "Ya registrado",
-        description: "Este email ya está registrado para el evento.",
-        variant: "destructive",
+    setIsPreparing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("create-payment-intent", {
+        body: { eventId: id, email, name }
       });
-      return;
+      if (error || !data.clientSecret) throw new Error("Error obteniendo secreto");
+      setClientSecret(data.clientSecret);
+    } catch (err: any) {
+      console.error(err);
+      toast({ title: "Error", description: "No se pudo iniciar el pago.", variant: "destructive" });
+      setIsPreparing(false);
     }
-
-    setCreatingIntent(true);
-
-    const { data, error } = await supabase.functions.invoke("create-payment-intent", {
-      body: { eventId: event.id, email: trimmedEmail },
-    });
-
-    if (error || !data?.clientSecret) {
-      toast({
-        title: "Error",
-        description: "No se pudo iniciar el proceso de pago.",
-        variant: "destructive",
-      });
-      setCreatingIntent(false);
-      return;
-    }
-
-    setClientSecret(data.clientSecret);
-    // Forzar apagado del spinner (evita quedarse colgado)
-    setCreatingIntent(false);
   };
 
-  const handlePaymentSuccess = async (intentId: string) => {
-    if (!event) return;
-
-    const trimmedEmail = email.trim().toLowerCase();
-
-    const { error } = await supabase.from("attendees").insert({
-      event_id: event.id,
-      user_email: trimmedEmail,
-      stripe_payment_intent_id: intentId,
-      status: "registered",
-    });
-
-    if (error) {
-      toast({
-        title: "Error",
-        description: "No se pudo completar el registro.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setSubmitted(true);
-    toast({
-      title: "¡Registrado!",
-      description: "Te has registrado exitosamente para el evento.",
-    });
-  };
-
-  const handlePaymentError = (message: string) => {
-    toast({
-      title: "Error de pago",
-      description: message,
-      variant: "destructive",
-    });
-  };
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!event) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
-        <h1 className="mb-4 text-2xl font-bold text-foreground">Evento no encontrado</h1>
-        <p className="mb-6 text-muted-foreground">El evento que buscas no existe o ha sido eliminado.</p>
-        <Button asChild>
-          <Link to="/">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Volver al inicio
-          </Link>
-        </Button>
-      </div>
-    );
-  }
-
-  if (submitted) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
-        <div className="text-center">
-          <CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-500" />
-          <h1 className="mb-2 text-2xl font-bold text-foreground">¡Registro Exitoso!</h1>
-          <p className="mb-6 text-muted-foreground">
-            Te has registrado para <strong>{event.title}</strong>.<br />
-            Recibirás más información pronto.
-          </p>
-          <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4">
-            <p className="text-sm text-yellow-400">
-              Recuerda: Si no asistes, se te cobrará la fianza de €{event.deposit_amount.toFixed(2)}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="flex justify-center items-center min-h-screen"><Loader2 className="animate-spin" /></div>;
+  if (!event) return <div className="text-center p-8">Evento no encontrado</div>;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-lg border-border bg-card">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold text-foreground">{event.title}</CardTitle>
-          <CardDescription className="text-muted-foreground">
-            Regístrate para confirmar tu asistencia
-          </CardDescription>
+    <div className="min-h-screen bg-slate-900 text-white p-8">
+      <Card className="max-w-md mx-auto bg-slate-800 border-slate-700">
+        <CardHeader>
+          <CardTitle className="text-white">{event.title}</CardTitle>
+          <div className="text-slate-400 text-sm space-y-1">
+            <p className="flex items-center gap-2"><Calendar className="w-4 h-4" /> {new Date(event.event_date).toLocaleDateString()}</p>
+            {event.location && <p className="flex items-center gap-2"><MapPin className="w-4 h-4" /> {event.location}</p>}
+          </div>
         </CardHeader>
-
-        <CardContent className="space-y-6">
-          <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-4">
-            <div className="flex items-center gap-3 text-foreground">
-              <Calendar className="h-5 w-5 text-primary" />
-              <span>{format(new Date(event.event_date), "EEEE, d 'de' MMMM, yyyy", { locale: es })}</span>
-            </div>
-            <div className="flex items-center gap-3 text-foreground">
-              <Calendar className="h-5 w-5 text-primary" />
-              <span>{format(new Date(event.event_date), "HH:mm 'hrs'", { locale: es })}</span>
-            </div>
-            {event.location && (
-              <div className="flex items-center gap-3 text-foreground">
-                <MapPin className="h-5 w-5 text-primary" />
-                <span>{event.location}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-lg border-2 border-yellow-500 bg-yellow-500/10 p-4 text-center">
-            <div className="flex items-center justify-center gap-2 text-yellow-400">
-              <Euro className="h-6 w-6" />
-              <span className="text-2xl font-bold">€{event.deposit_amount.toFixed(2)}</span>
-            </div>
-            <p className="mt-2 text-sm text-yellow-300">Fianza reembolsable si asistes</p>
-          </div>
-
+        <CardContent>
           {!clientSecret ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name" className="text-foreground">
-                  Tu Nombre
-                </Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="Juan García"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  maxLength={100}
-                  className="bg-input border-border"
-                />
+            <form onSubmit={handleStartBooking} className="space-y-4">
+              <div>
+                <Label className="text-slate-300">Tu Nombre</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} className="bg-slate-700 border-slate-600 text-white" placeholder="Nombre" />
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="email" className="text-foreground">
-                  Tu Email
-                </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="tu@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  maxLength={255}
-                  className="bg-input border-border"
-                />
+              <div>
+                <Label className="text-slate-300">Tu Email</Label>
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="bg-slate-700 border-slate-600 text-white" placeholder="Email" />
               </div>
-
-              <Button
-                type="button"
-                onClick={handleContinueToPayment}
-                className="w-full text-lg py-6"
-                disabled={creatingIntent}
-              >
-                {creatingIntent && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
-                Continuar al Pago
+              <Button type="submit" disabled={isPreparing} className="w-full">
+                {isPreparing ? <Loader2 className="animate-spin" /> : "Continuar al Pago"}
               </Button>
-            </div>
+            </form>
           ) : (
-            elementsOptions && (
-              <Elements stripe={stripePromise} options={elementsOptions}>
-                <CheckoutForm onSuccess={handlePaymentSuccess} onError={handlePaymentError} />
+            <div className="space-y-4">
+              <p className="text-green-400 text-center font-medium">Pago Iniciado Correctamente</p>
+              <Elements stripe={stripePromise} options={{ clientSecret }}>
+                <CheckoutForm
+                  clientSecret={clientSecret}
+                  onSuccess={() => toast({ title: "¡Éxito!", description: "Reserva confirmada" })}
+                />
               </Elements>
-            )
+            </div>
           )}
         </CardContent>
       </Card>
