@@ -30,26 +30,36 @@ const CheckoutForm = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!stripe || !elements) return;
+    if (!stripe || !elements || loading) return;
 
     setLoading(true);
-    const { error } = await stripe.confirmPayment({
-      elements,
-      confirmParams: {
-        return_url: window.location.href + "?payment_success=true",
-      },
-      redirect: "if_required",
-    });
+    try {
+      const { error } = await stripe.confirmPayment({
+        elements,
+        confirmParams: {
+          return_url: window.location.href + "?payment_success=true",
+        },
+        redirect: "if_required",
+      });
 
-    if (error) {
+      if (error) {
+        toast({
+          title: "Error en el pago",
+          description: error.message,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      onSuccess();
+    } catch (err: any) {
       toast({
         title: "Error en el pago",
-        description: error.message,
+        description: err?.message ?? "No se pudo confirmar el pago.",
         variant: "destructive",
       });
+    } finally {
       setLoading(false);
-    } else {
-      onSuccess();
     }
   };
 
