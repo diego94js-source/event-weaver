@@ -88,9 +88,11 @@ export default function PublicEvent() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [stripePromise, setStripePromise] = useState<ReturnType<typeof loadStripe> | null>(null);
   const [stripeInitError, setStripeInitError] = useState<string | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
+  const [registered, setRegistered] = useState(false);
 
   useEffect(() => {
     const fetchEvent = async () => {
@@ -101,6 +103,29 @@ export default function PublicEvent() {
     };
     if (id) fetchEvent();
   }, [id]);
+
+  const registerAttendee = async () => {
+    if (!id || !email || !paymentIntentId) return;
+    
+    const { error } = await supabase.from("attendees").insert({
+      event_id: id,
+      user_email: email,
+      stripe_payment_intent_id: paymentIntentId,
+      status: "registered",
+    });
+
+    if (error) {
+      console.error("Error registering attendee:", error);
+      toast({
+        title: "Error",
+        description: "Pago procesado pero hubo un error al registrar. Contacta al organizador.",
+        variant: "destructive",
+      });
+    } else {
+      setRegistered(true);
+      toast({ title: "¡Éxito!", description: "Reserva confirmada" });
+    }
+  };
 
   // Stripe publishable key must be available in the browser.
   // If Vite env isn't injecting it, fetch it from the backend (safe: publishable key is public).
@@ -150,6 +175,7 @@ export default function PublicEvent() {
       });
       if (error || !data.clientSecret) throw new Error("Error obteniendo secreto");
       setClientSecret(data.clientSecret);
+      setPaymentIntentId(data.paymentIntentId);
     } catch (err: any) {
       console.error(err);
       toast({
@@ -231,9 +257,9 @@ export default function PublicEvent() {
                     },
                   }}
                 >
-                  <CheckoutForm
+                <CheckoutForm
                     clientSecret={clientSecret}
-                    onSuccess={() => toast({ title: "¡Éxito!", description: "Reserva confirmada" })}
+                    onSuccess={registerAttendee}
                   />
                 </Elements>
               )}
