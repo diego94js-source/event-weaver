@@ -40,10 +40,14 @@ const CheckoutForm = ({ clientSecret, onSuccess }: { clientSecret: string, onSuc
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="w-full bg-white p-4 rounded-lg text-black min-h-[150px]">
-        <PaymentElement />
+      <div className="w-full bg-white p-4 rounded-lg min-h-[150px]">
+        <PaymentElement 
+          options={{
+            layout: 'tabs'
+          }}
+        />
       </div>
-      <Button type="submit" disabled={!stripe || loading} className="w-full">
+      <Button type="submit" disabled={!stripe || !elements || loading} className="w-full">
         {loading ? <Loader2 className="animate-spin" /> : "Reservar Lugar (€20.00)"}
       </Button>
     </form>
@@ -122,7 +126,18 @@ export default function PublicEvent() {
           ) : (
             <div className="space-y-4">
               <p className="text-green-400 text-center font-medium">Pago Iniciado Correctamente</p>
-              <Elements stripe={stripePromise} options={{ clientSecret }}>
+              <Elements 
+                stripe={stripePromise} 
+                options={{ 
+                  clientSecret,
+                  appearance: {
+                    theme: 'stripe',
+                    variables: {
+                      colorPrimary: '#0ea5e9',
+                    }
+                  }
+                }}
+              >
                 <CheckoutForm
                   clientSecret={clientSecret}
                   onSuccess={() => toast({ title: "¡Éxito!", description: "Reserva confirmada" })}
